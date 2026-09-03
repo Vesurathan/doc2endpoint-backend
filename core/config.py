@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
 
+    # Cloudflare R2 storage
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "doc2endpoint-uploads"
+    R2_PUBLIC_URL: str = ""   # optional — only if bucket has public access enabled
+
     class Config:
         env_file = ".env"
 
