@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
 
+    # Email / SMTP
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    FROM_EMAIL: str = ""
+
     # Cloudflare R2 storage
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""

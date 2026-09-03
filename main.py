@@ -38,6 +38,10 @@ def _run_migrations():
         # Datasets — custom endpoint slug
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS custom_endpoint VARCHAR(255)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_datasets_custom_endpoint ON datasets (custom_endpoint) WHERE custom_endpoint IS NOT NULL",
+        # Users — email verification
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(10)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMP WITH TIME ZONE",
     ]
     with engine.begin() as conn:
         for sql in migrations:

@@ -1,3 +1,7 @@
+import random
+import string
+from datetime import datetime, timezone, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -6,6 +10,8 @@ import httpx
 from db.database import get_db
 from models.user import User
 from core.security import hash_password, verify_password, create_access_token, decode_token
+from services.email import send_verification_email
+from services.disposable_emails import is_disposable
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -56,21 +62,42 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def _generate_code() -> str:
+    return "".join(random.choices(string.digits, k=6))
+
+
+def _send_verification(user: User) -> None:
+    code = _generate_code()
+    user.verification_code = code
+    user.verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    send_verification_email(user.email, user.full_name, code)
+
+
 # ─── Email / password auth ────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
+    if is_disposable(body.email):
+        raise HTTPException(
+            status_code=400,
+            detail="Temporary or disposable email addresses are not allowed. Please use a real email address.",
+        )
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     user = User(
         full_name=body.full_name,
         email=body.email,
         hashed_password=hash_password(body.password),
+        is_verified=False,
     )
     db.add(user)
+    db.flush()  # get user.id before sending email
+    _send_verification(user)
     db.commit()
     db.refresh(user)
-    return UserOut.from_orm_user(user)
+    return {"message": "Account created. Please check your email for a verification code.", "email": user.email}
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -82,8 +109,57 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
         raise HTTPException(status_code=400, detail="This account uses Google Sign-In. Please continue with Google.")
     if not verify_password(form.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="EMAIL_NOT_VERIFIED",
+        )
     token = create_access_token({"sub": str(user.id)})
     return {"access_token": token, "user": UserOut.from_orm_user(user)}
+
+
+# ─── Email verification ───────────────────────────────────────────────────────
+
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/verify-email", status_code=200)
+def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with that email.")
+    if user.is_verified:
+        raise HTTPException(status_code=400, detail="Email is already verified.")
+    if not user.verification_code or user.verification_code != body.code.strip():
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+    if user.verification_expires_at and user.verification_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Verification code has expired. Request a new one.")
+
+    user.is_verified = True
+    user.verification_code = None
+    user.verification_expires_at = None
+    db.commit()
+
+    token = create_access_token({"sub": str(user.id)})
+    return {"access_token": token, "token_type": "bearer", "user": UserOut.from_orm_user(user)}
+
+
+@router.post("/resend-verification", status_code=200)
+def resend_verification(body: ResendVerificationRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with that email.")
+    if user.is_verified:
+        raise HTTPException(status_code=400, detail="Email is already verified.")
+    _send_verification(user)
+    db.commit()
+    return {"message": "A new verification code has been sent to your email."}
 
 
 @router.get("/me")
@@ -135,8 +211,9 @@ async def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
         user = User(
             full_name=full_name,
             email=email,
-            hashed_password=None,   # No password for Google-only accounts
+            hashed_password=None,
             google_id=google_id,
+            is_verified=True,  # Google already verified the email
         )
         db.add(user)
         db.commit()

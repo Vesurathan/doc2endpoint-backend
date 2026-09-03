@@ -25,6 +25,9 @@ class User(Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verification_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
