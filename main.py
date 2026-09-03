@@ -66,7 +66,12 @@ app = FastAPI(title="Doc2Endpoint", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://www.doc2endpoint.com",
+        "https://doc2endpoint.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
