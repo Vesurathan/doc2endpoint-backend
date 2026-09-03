@@ -2,6 +2,7 @@ aiofiles==25.1.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic==0.101.0
+APScheduler>=3.10
 anyio==4.13.0
 bcrypt==5.0.0
 certifi==2026.4.22
