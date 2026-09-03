@@ -63,18 +63,21 @@ def create_checkout_session(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if not stripe.api_key:
+        raise HTTPException(503, "Stripe is not configured on this server.")
+
     plan_name = body.get("plan", "").lower()
     price_id = PLAN_PRICE_MAP.get(plan_name)
 
     if not price_id:
         raise HTTPException(400, f"Unknown plan: {plan_name!r}. Use 'premium' or 'pro'.")
 
-    if not stripe.api_key:
-        raise HTTPException(503, "Stripe is not configured on this server.")
-
-    customer_id = _get_or_create_customer(current_user)
-    db.add(current_user)
-    db.commit()
+    try:
+        customer_id = _get_or_create_customer(current_user)
+        db.add(current_user)
+        db.commit()
+    except stripe.StripeError as e:
+        raise HTTPException(502, f"Stripe error: {str(e)}")
 
     try:
         session = stripe.checkout.Session.create(
