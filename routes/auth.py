@@ -65,7 +65,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _generate_code() -> str:
-    return "".join(random.choices(string.digits, k=6))
+    return "000000"  # TODO: replace with random code before going live
 
 
 def _assign_verification_code(user: User) -> str:
