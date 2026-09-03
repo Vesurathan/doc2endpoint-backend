@@ -18,6 +18,7 @@ from extractors.dispatcher import extract as do_extract
 from agent import schema_agent
 from agent import heuristics
 from models.user import Plan
+from services import storage
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -68,31 +69,39 @@ async def upload_dataset(
 
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     filename = f"{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join(settings.UPLOAD_DIR, filename)
+    local_path = os.path.join(settings.UPLOAD_DIR, filename)
 
     size = 0
-    async with aiofiles.open(file_path, "wb") as out:
+    async with aiofiles.open(local_path, "wb") as out:
         while chunk := await file.read(1024 * 256):
             size += len(chunk)
             if size > MAX_FILE_SIZE:
-                os.remove(file_path)
+                os.remove(local_path)
                 raise HTTPException(413, "File exceeds 100MB limit")
             await out.write(chunk)
+
+    # Upload to R2 if configured; fall back to local path
+    r2_key = f"uploads/{current_user.id}/{filename}"
+    stored_path = storage.upload_file(local_path, r2_key)
+    if storage._use_r2():
+        os.remove(local_path)
 
     dataset = Dataset(
         user_id=current_user.id,
         name=name or os.path.splitext(file.filename or "untitled")[0],
         doc_type=DocType(doc_type),
         original_filename=file.filename or filename,
-        file_path=file_path,
+        file_path=stored_path,
         status=DatasetStatus.extracting,
     )
     db.add(dataset)
     db.commit()
     db.refresh(dataset)
 
+    # Get a local path for extraction (downloads from R2 if needed)
+    extract_path = storage.download_to_temp(stored_path, suffix=ext)
     try:
-        schema = do_extract(file_path, DocType(doc_type))
+        schema = do_extract(extract_path, DocType(doc_type))
         dataset.row_count = schema.get("row_count", 0)
         dataset.status = DatasetStatus.reviewing
 
@@ -149,6 +158,13 @@ async def upload_dataset(
         dataset.status = DatasetStatus.failed
         db.commit()
         raise HTTPException(500, f"Extraction failed: {str(e)}")
+    finally:
+        # Clean up the temp extraction file when using R2
+        if storage._use_r2() and extract_path != stored_path:
+            try:
+                os.remove(extract_path)
+            except OSError:
+                pass
 
     return _dataset_out(dataset)
 
@@ -268,26 +284,35 @@ def _load_data(conn, table_name: str, columns: list[dict], dataset: Dataset):
     import pandas as pd
 
     doc_type = dataset.doc_type
-    fp = dataset.file_path
+    ext = os.path.splitext(dataset.original_filename or "")[1].lower() or ""
+    fp = storage.download_to_temp(dataset.file_path, suffix=ext)
+    _is_temp = storage._use_r2() and fp != dataset.file_path
 
-    # ── Structured formats: Excel / CSV → pandas ─────────────────────────────
-    if doc_type in (DocType.excel,):
-        df = pd.read_excel(fp)
-    elif doc_type == DocType.csv:
-        df = pd.read_csv(fp)
+    try:
+        # ── Structured formats: Excel / CSV → pandas ─────────────────────────
+        if doc_type in (DocType.excel,):
+            df = pd.read_excel(fp)
+        elif doc_type == DocType.csv:
+            df = pd.read_csv(fp)
 
-    # ── PDF ───────────────────────────────────────────────────────────────────
-    elif doc_type == DocType.pdf:
-        _load_pdf(conn, table_name, columns, fp)
-        return
+        # ── PDF ───────────────────────────────────────────────────────────────
+        elif doc_type == DocType.pdf:
+            _load_pdf(conn, table_name, columns, fp)
+            return
 
-    # ── DOCX ──────────────────────────────────────────────────────────────────
-    elif doc_type == DocType.docx:
-        _load_docx(conn, table_name, columns, fp)
-        return
+        # ── DOCX ──────────────────────────────────────────────────────────────
+        elif doc_type == DocType.docx:
+            _load_docx(conn, table_name, columns, fp)
+            return
 
-    else:
-        return  # image / unsupported — nothing to load
+        else:
+            return  # image / unsupported — nothing to load
+    finally:
+        if _is_temp:
+            try:
+                os.remove(fp)
+            except OSError:
+                pass
 
     # ── Common path for Excel / CSV ───────────────────────────────────────────
     df = df.dropna(how="all")
