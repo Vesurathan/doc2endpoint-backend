@@ -34,11 +34,11 @@ def _send(to: str, subject: str, html: str, text: str) -> bool:
     try:
         if port == 465:
             ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, port, context=ctx) as s:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, port, context=ctx, timeout=10) as s:
                 s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 s.sendmail(from_addr, to, msg.as_string())
         else:
-            with smtplib.SMTP(settings.SMTP_HOST, port) as s:
+            with smtplib.SMTP(settings.SMTP_HOST, port, timeout=10) as s:
                 s.ehlo()
                 s.starttls(context=ssl.create_default_context())
                 s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)

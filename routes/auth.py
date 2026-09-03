@@ -2,7 +2,7 @@ import random
 import string
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
@@ -68,17 +68,17 @@ def _generate_code() -> str:
     return "".join(random.choices(string.digits, k=6))
 
 
-def _send_verification(user: User) -> None:
+def _assign_verification_code(user: User) -> str:
     code = _generate_code()
     user.verification_code = code
     user.verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
-    send_verification_email(user.email, user.full_name, code)
+    return code
 
 
 # ─── Email / password auth ────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+def register(body: RegisterRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if is_disposable(body.email):
         raise HTTPException(
             status_code=400,
@@ -93,10 +93,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         is_verified=False,
     )
     db.add(user)
-    db.flush()  # get user.id before sending email
-    _send_verification(user)
+    db.flush()
+    code = _assign_verification_code(user)
     db.commit()
-    db.refresh(user)
+    # Send email after the response is returned — never blocks registration
+    background_tasks.add_task(send_verification_email, user.email, user.full_name, code)
     return {"message": "Account created. Please check your email for a verification code.", "email": user.email}
 
 
@@ -151,14 +152,15 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-verification", status_code=200)
-def resend_verification(body: ResendVerificationRequest, db: Session = Depends(get_db)):
+def resend_verification(body: ResendVerificationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="No account found with that email.")
     if user.is_verified:
         raise HTTPException(status_code=400, detail="Email is already verified.")
-    _send_verification(user)
+    code = _assign_verification_code(user)
     db.commit()
+    background_tasks.add_task(send_verification_email, user.email, user.full_name, code)
     return {"message": "A new verification code has been sent to your email."}
 
 
