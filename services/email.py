@@ -66,3 +66,25 @@ def send_verification_email(to: str, name: str, code: str) -> bool:
     """
     text = f"Hi {name},\n\nYour Doc2Endpoint verification code is: {code}\n\nThis code expires in 24 hours."
     return _send(to, subject, html, text)
+
+
+def send_password_reset_email(to: str, name: str, code: str) -> bool:
+    subject = f"{code} is your Doc2Endpoint password reset code"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fff">
+      <h2 style="color:#6366f1;margin:0 0 8px">Doc2Endpoint</h2>
+      <p style="color:#374151;font-size:15px">Hi {name},</p>
+      <p style="color:#374151;font-size:15px">We received a request to reset your password. Use this code to continue:</p>
+      <div style="background:#f3f4f6;border-radius:12px;padding:24px;text-align:center;margin:24px 0">
+        <span style="font-size:40px;font-weight:700;letter-spacing:10px;color:#111827">{code}</span>
+      </div>
+      <p style="color:#6b7280;font-size:13px">This code expires in <strong>30 minutes</strong>. If you didn't request a password reset, you can safely ignore this email — your password will not change.</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
+      <p style="color:#9ca3af;font-size:12px">Doc2Endpoint — Turn documents into live REST APIs</p>
+    </div>
+    """
+    text = (
+        f"Hi {name},\n\nYour Doc2Endpoint password reset code is: {code}\n\n"
+        "This code expires in 30 minutes. If you didn't request a reset, ignore this email."
+    )
+    return _send(to, subject, html, text)

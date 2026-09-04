@@ -1,4 +1,5 @@
 import random
+import secrets
 import string
 from datetime import datetime, timezone, timedelta
 
@@ -10,7 +11,7 @@ import httpx
 from db.database import get_db
 from models.user import User
 from core.security import hash_password, verify_password, create_access_token, decode_token
-from services.email import send_verification_email
+from services.email import send_verification_email, send_password_reset_email
 from services.disposable_emails import is_disposable
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -72,6 +73,14 @@ def _assign_verification_code(user: User) -> str:
     code = _generate_code()
     user.verification_code = code
     user.verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    return code
+
+
+def _assign_reset_code(user: User) -> str:
+    # secrets — this code guards account takeover, so it must not be predictable
+    code = "".join(secrets.choice(string.digits) for _ in range(6))
+    user.reset_code = code
+    user.reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
     return code
 
 
@@ -162,6 +171,59 @@ def resend_verification(body: ResendVerificationRequest, background_tasks: Backg
     db.commit()
     background_tasks.add_task(send_verification_email, user.email, user.full_name, code)
     return {"message": "A new verification code has been sent to your email."}
+
+
+# ─── Password reset ───────────────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+
+# Same reply whether or not the address exists — never confirm which emails are registered
+_RESET_SENT_MESSAGE = "If an account exists for that email, we've sent a reset code to it."
+
+
+@router.post("/forgot-password", status_code=200)
+def forgot_password(body: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email).first()
+    if user and user.is_active:
+        code = _assign_reset_code(user)
+        db.commit()
+        background_tasks.add_task(send_password_reset_email, user.email, user.full_name, code)
+    return {"message": _RESET_SENT_MESSAGE, "email": body.email}
+
+
+@router.post("/reset-password", response_model=TokenResponse)
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    user = db.query(User).filter(User.email == body.email).first()
+    invalid = HTTPException(status_code=400, detail="Invalid or expired reset code.")
+    if not user or not user.is_active or not user.reset_code:
+        raise invalid
+    if not secrets.compare_digest(user.reset_code, body.code.strip()):
+        raise invalid
+    if not user.reset_expires_at or user.reset_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Reset code has expired. Request a new one.")
+
+    user.hashed_password = hash_password(body.new_password)
+    user.reset_code = None
+    user.reset_expires_at = None
+    # Receiving the code proves they own the address
+    user.is_verified = True
+    user.verification_code = None
+    user.verification_expires_at = None
+    db.commit()
+
+    token = create_access_token({"sub": str(user.id)})
+    return {"access_token": token, "user": UserOut.from_orm_user(user)}
 
 
 @router.get("/me")

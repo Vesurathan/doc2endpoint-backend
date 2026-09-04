@@ -28,6 +28,8 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

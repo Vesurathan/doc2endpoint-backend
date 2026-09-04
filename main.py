@@ -42,6 +42,9 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(10)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMP WITH TIME ZONE",
+        # Users — password reset
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_code VARCHAR(10)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMP WITH TIME ZONE",
     ]
     with engine.begin() as conn:
         for sql in migrations:
