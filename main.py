@@ -75,10 +75,12 @@ app.add_middleware(
         "http://localhost:3000",
         "https://www.doc2endpoint.com",
         "https://doc2endpoint.com",
+        "https://api.doc2endpoint.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(auth.router)
